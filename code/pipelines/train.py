@@ -5,8 +5,8 @@ import argparse
 import datetime
 from pathlib import Path
 import sys
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, asdict, fields
+from typing import Optional, Dict, Any
 import datetime
 import torch
 import torch.nn as nn
@@ -87,99 +87,66 @@ class KTConfig:
     learning_rate: float = 0.001
     num_epochs: int = 10
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
+    checkpoint_freq: int = 5
     
     # Data parameters
     data_path: Optional[str] = None
-    outputs_dir: str = "./outputs"
+    outputs_dir: str = "./KT_outputs"
     create_archive: bool = False
-    checkpoint_freq: int = 5  # Save every 5 epochs
     
     # Dummy data parameters
     use_dummy_data: bool = False
     num_users: int = 1000
     num_questions: int = 10000
     dummy_samples_per_user: int = 10
-    
+
     def __post_init__(self):
-        """Validate configuration"""
+        """Simple validation"""
         if not self.use_dummy_data and not self.data_path:
             raise ValueError("Must provide either data_path or set use_dummy_data=True")
-        
-        os.makedirs(self.outputs_dir, exist_ok=True)
-    
+
     @classmethod
-    def from_dict(cls, config_dict: dict):
-        """Create config from dictionary with validation"""
-        try:
-            return cls(**config_dict)
-        except TypeError as e:
-            raise ValueError(f"Invalid configuration: {str(e)}")
-    
-    @classmethod
-    def from_json(cls, json_path: str):
-        """Load config from JSON file"""
-        try:
-            with open(json_path, 'r') as f:
-                return cls.from_dict(json.load(f))
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid JSON in {json_path}: {str(e)}")
-        except IOError as e:
-            raise ValueError(f"Could not read {json_path}: {str(e)}")
-    
-    @classmethod
-    def from_json_str(cls, json_str: str):
-        """Load config from JSON string"""
-        try:
-            return cls.from_dict(json.loads(json_str))
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid JSON string: {str(e)}")
-    
+    def from_dict(cls, config_dict: Dict[str, Any]):
+        """Create from dictionary - simplest possible version"""
+        return cls(**config_dict)
+
     @classmethod
     def from_cli(cls):
-        """Create config from command line arguments"""
-        parser = argparse.ArgumentParser(description="Knowledge Tracing Model")
+        """Handle all input methods simply and reliably"""
+        parser = argparse.ArgumentParser()
         
-        # Model config
-        parser.add_argument("--embedding_dim", type=int, default=64)
-        parser.add_argument("--max_seq_len", type=int, default=100)
+        # Just two options: JSON input or normal CLI args
+        parser.add_argument("--json", type=str, help="JSON config string or file path")
         
-        # Training config
-        parser.add_argument("--batch_size", type=int, default=32)
-        parser.add_argument("--learning_rate", type=float, default=0.001)
-        parser.add_argument("--num_epochs", type=int, default=10)
-        parser.add_argument("--device", type=str, 
-                          default="cuda" if torch.cuda.is_available() else "cpu")
-        
-        # Data config
-        parser.add_argument("--data_path", type=str)
-        parser.add_argument("--outputs_dir", type=str, default="./outputs")
-        
-        # Dummy data
+        # Regular parameters as optional overrides
         parser.add_argument("--use_dummy_data", action="store_true")
-        parser.add_argument("--num_users", type=int, default=1000)
-        parser.add_argument("--num_questions", type=int, default=10000)
-        parser.add_argument("--dummy_samples_per_user", type=int, default=10)
-        
-        # JSON config
-        parser.add_argument("--json", type=str, 
-                          help="JSON config string or path to JSON file")
+        parser.add_argument("--num_users", type=int)
+        parser.add_argument("--num_questions", type=int)
+        # [Add other parameters similarly...]
         
         args = parser.parse_args()
         
-        # Handle JSON input
+        # Start with empty config
+        config = {}
+        
+        # Load from JSON if provided (file or string)
         if args.json:
             try:
-                # First try to parse as JSON string
-                return cls.from_json_str(args.json)
-            except ValueError:
-                # If that fails, try as file path
-                try:
-                    return cls.from_json(args.json)
-                except ValueError as e:
-                    raise ValueError(f"Could not parse JSON input: {str(e)}")
+                if Path(args.json).exists():
+                    with open(args.json) as f:
+                        config.update(json.load(f))
+                else:
+                    config.update(json.loads(args.json))
+            except json.JSONDecodeError as e:
+                raise ValueError(f"Invalid JSON: {e}")
         
-        # Build from CLI args
-        return cls.from_dict(vars(args))
+        # Override with any explicit CLI args
+        for field in fields(cls):
+            if (val := getattr(args, field.name, None)) is not None:
+                config[field.name] = val
+        
+        return cls.from_dict(config)
+
 
 def generate_dummy_data(config):
     """Generate synthetic data for testing"""
@@ -224,17 +191,20 @@ class OutputManager:
         if latest.exists():
             latest.unlink()
         latest.symlink_to(self.run_dir, target_is_directory=True)
-    
+
     def save_config(self, config, source='runtime'):
-        """Save configuration files"""
+        """Save configuration files with proper type conversion"""
+        config_dict = config.__dict__.copy()
+        
+        # Convert numpy types to native Python types
+        for key, value in config_dict.items():
+            if isinstance(value, (np.integer, np.floating)):
+                config_dict[key] = int(value) if isinstance(value, np.integer) else float(value)
+        
         config_path = self.dirs['configs'] / f"{source}_config.json"
         with open(config_path, 'w') as f:
-            json.dump(config.__dict__, f, indent=2)
-        
-        # Optionally save CLI args if available
-        if hasattr(config, 'cli_args'):
-            with open(self.dirs['configs'] / 'cli_args.txt', 'w') as f:
-                f.write(" ".join(config.cli_args))
+            json.dump(config_dict, f, indent=2, default=str)  # Added default=str for other non-serializable types
+    
     
     def save_model(self, model, metadata=None):
         """Save model and related artifacts"""
@@ -251,15 +221,23 @@ class OutputManager:
         
         with open(self.dirs['models'] / 'model_metadata.json', 'w') as f:
             json.dump(metadata, f, indent=2)
-    
+
     def save_training_metrics(self, metrics):
-        """Save training metrics and curves"""
+        """Save training metrics with proper type conversion"""
+        metrics_dict = metrics.copy()
+        
+        # Convert numpy types in metrics
+        for key in metrics_dict:
+            if isinstance(metrics_dict[key], list):
+                metrics_dict[key] = [
+                    float(x) if isinstance(x, (np.floating, np.integer)) else x 
+                    for x in metrics_dict[key]
+                ]
+    
         metrics_path = self.dirs['training'] / 'metrics.json'
         with open(metrics_path, 'w') as f:
-            json.dump(metrics, f, indent=2)
-        
-        # Example of saving a plot (would need matplotlib)
-        # self.save_learning_curve(metrics)
+            json.dump(metrics_dict, f, indent=2, default=str)
+    
     
     def save_data_artifacts(self, data, name):
         """Save processed data artifacts"""
@@ -277,7 +255,7 @@ class OutputManager:
         archive_path = self.base_dir / self.run_id
         return shutil.make_archive(archive_path, format, self.run_dir)
 
-# Example Usage in Training Code
+
 def train_model(config):
     output_mgr = OutputManager(config.outputs_dir)
     
@@ -285,24 +263,85 @@ def train_model(config):
         # 1. Save configuration
         output_mgr.save_config(config)
         
-        # 2. Setup and train model
-        model = SimpleKTModel(...)
+        # 2. Setup data and determine model dimensions
+        if config.use_dummy_data:
+            data_path = generate_dummy_data(config)
+        else:
+            data_path = config.data_path
+            
+        dataset = SimpleKTDataset(data_path, config.max_seq_len)
+        
+        # Calculate number of unique users and questions
+        num_users = max(seq['user_id'] for seq in dataset.data) + 1
+        num_questions = max(max(seq['question_ids']) for seq in dataset.data) + 1
+
+        # 3. Initialize model with proper dimensions
+        model = SimpleKTModel(
+            num_users=num_users,
+            num_questions=num_questions,
+            embedding_dim=config.embedding_dim
+        ).to(config.device)
+        
+        # 4. Training setup
+        optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate)
+        criterion = nn.CrossEntropyLoss()
+        dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=True)
+        
         metrics = {'accuracy': [], 'loss': []}
         
+        # 5. Training loop
         for epoch in range(config.num_epochs):
-            # Training loop...
-            metrics['accuracy'].append(accuracy)
-            metrics['loss'].append(loss)
+            model.train()
+            total_loss = 0
+            correct = 0
+            total = 0
             
-            # Optional: Save checkpoint
-            if epoch % config.checkpoint_freq == 0:
+            for batch in dataloader:
+                # Prepare batch
+                user_ids = batch['user_id'].to(config.device)
+                question_ids = batch['question_ids'].to(config.device)
+                responses = batch['responses'].to(config.device)
+                seq_lens = batch['seq_len']
+                
+                # Create mask for valid positions
+                mask = torch.arange(config.max_seq_len, device=config.device)[None, :] < seq_lens[:, None]
+                mask = mask.view(-1)
+                
+                # Forward pass
+                outputs = model(
+                    user_ids.repeat_interleave(config.max_seq_len)[mask],
+                    question_ids.view(-1)[mask]
+                )
+                loss = criterion(outputs, responses.view(-1)[mask])
+                
+                # Backward pass
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+                
+                # Metrics
+                total_loss += loss.item()
+                _, predicted = torch.max(outputs, 1)
+                total += mask.sum().item()
+                correct += (predicted == responses.view(-1)[mask]).sum().item()
+            
+            epoch_acc = correct / total
+            epoch_loss = total_loss / len(dataloader)
+            metrics['accuracy'].append(epoch_acc)
+            metrics['loss'].append(epoch_loss)
+            
+            print(f"Epoch {epoch+1}/{config.num_epochs}: "
+                  f"Loss={epoch_loss:.4f}, Accuracy={epoch_acc:.4f}")
+            
+            # Save checkpoint
+            if (epoch + 1) % config.checkpoint_freq == 0:
                 checkpoint_path = output_mgr.get_path(
                     'checkpoints', 
-                    f'model_epoch{epoch}.pt'
+                    f'model_epoch{epoch+1}.pt'
                 )
                 torch.save(model.state_dict(), checkpoint_path)
         
-        # 3. Save final artifacts
+        # 6. Save final artifacts
         output_mgr.save_model(model, {
             'num_users': num_users,
             'num_questions': num_questions,
@@ -312,20 +351,17 @@ def train_model(config):
         output_mgr.save_training_metrics(metrics)
         
         if config.use_dummy_data:
-            output_mgr.save_data_artifacts(dummy_data_path, 'dummy_data')
+            output_mgr.save_data_artifacts(data_path, 'dummy_data')
         
-        # 4. Create archive (optional)
         if config.create_archive:
             output_mgr.archive()
             
         return output_mgr.run_dir
     
     except Exception as e:
-        # Save error log
         with open(output_mgr.get_path('logs', 'errors.log'), 'w') as f:
             f.write(f"Training failed: {str(e)}\n")
         raise
-
 
 if __name__ == "__main__":
     try:
