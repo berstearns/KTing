@@ -209,3 +209,5 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 data/
+KT_outputs
+outputs
