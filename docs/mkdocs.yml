@@ -1,3 +1,7 @@
 site_name: My Docs
 # relative path to /docs folder
 docs_dir: src
+theme: material
+plugins:
+  - search
+  - mermaid2
