@@ -1,3 +1,6 @@
+"""
+Knowledge Tracing Training Pipeline
+"""
 import os
 import json
 import shutil
