@@ -1,4 +1,4 @@
-name: Deploy static content to Pages
+ame: Deploy static content to Pages
 
 on:
   # Runs on pushes targeting the default branch only when docs/ files change
