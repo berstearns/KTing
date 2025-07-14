@@ -19,7 +19,7 @@ import pandas as pd
 import numpy as np
 
 
-from KTdatasets.datasets import SimpleKTDataset
+from KTdatasets import SimpleKTDataset
 
 class SimpleKTModel(nn.Module):
     """Knowledge tracing model with user and question embeddings"""
