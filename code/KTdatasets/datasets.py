@@ -1,4 +1,6 @@
 import pandas as pd
+from torch.utils.data import Dataset 
+
 class SimpleKTDataset(Dataset):
     """Dataset class for knowledge tracing"""
     def __init__(self, data_path, max_seq_len=100):
