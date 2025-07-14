@@ -116,41 +116,65 @@ class KTConfig:
     @classmethod
     def from_cli(cls):
         """Handle all input methods simply and reliably"""
-        parser = argparse.ArgumentParser()
+        parser = argparse.ArgumentParser(description="Knowledge Tracing Training Pipeline")
         
-        # Just two options: JSON input or normal CLI args
-        parser.add_argument("--json", type=str, help="JSON config string or file path")
+        # JSON configuration options
+        parser.add_argument("--json_string", type=str, help="JSON config string")
+        parser.add_argument("--json_file", type=str, help="Path to JSON config file")
         
-        # Regular parameters as optional overrides
-        parser.add_argument("--use_dummy_data", action="store_true")
-        parser.add_argument("--num_users", type=int)
-        parser.add_argument("--num_questions", type=int)
-        # [Add other parameters similarly...]
+        # Model parameters
+        parser.add_argument("--embedding_dim", type=int, help="Dimension of user and question embeddings")
+        parser.add_argument("--max_seq_len", type=int, help="Maximum sequence length for training")
+        
+        # Training parameters
+        parser.add_argument("--batch_size", type=int, help="Training batch size")
+        parser.add_argument("--learning_rate", type=float, help="Learning rate for optimizer")
+        parser.add_argument("--num_epochs", type=int, help="Number of training epochs")
+        parser.add_argument("--device", type=str, help="Device to use for training (cpu/cuda)")
+        parser.add_argument("--checkpoint_freq", type=int, help="Frequency of model checkpointing (in epochs)")
+        
+        # Data parameters
+        parser.add_argument("--data_path", type=str, help="Path to training data CSV file")
+        parser.add_argument("--outputs_dir", type=str, help="Directory to save outputs")
+        parser.add_argument("--create_archive", action="store_true", help="Create archive of outputs after training")
+        
+        # Dummy data parameters
+        parser.add_argument("--use_dummy_data", action="store_true", help="Use synthetic dummy data for testing")
+        parser.add_argument("--num_users", type=int, help="Number of dummy users to generate")
+        parser.add_argument("--num_questions", type=int, help="Number of dummy questions to generate")
+        parser.add_argument("--dummy_samples_per_user", type=int, help="Number of samples per dummy user")
         
         args = parser.parse_args()
         
         # Start with empty config
         config = {}
         
-        # Load from JSON if provided (file or string)
-        if args.json:
+        # Load from JSON file if provided
+        if args.json_file:
             try:
-                if Path(args.json).exists():
-                    with open(args.json) as f:
-                        config.update(json.load(f))
-                else:
-                    config.update(json.loads(args.json))
+                with open(args.json_file) as f:
+                    config.update(json.load(f))
             except json.JSONDecodeError as e:
-                raise ValueError(f"Invalid JSON: {e}")
+                raise ValueError(f"Invalid JSON file: {e}")
+            except FileNotFoundError:
+                raise ValueError(f"JSON file not found: {args.json_file}")
+        
+        # Load from JSON string if provided
+        if args.json_string:
+            try:
+                config.update(json.loads(args.json_string))
+            except json.JSONDecodeError as e:
+                raise ValueError(f"Invalid JSON string: {str(e)}")
         
         # Override with any explicit CLI args
         for field in fields(cls):
-            if (val := getattr(args, field.name, None)) is not None:
-                config[field.name] = val
+            if hasattr(args, field.name):
+                arg_value = getattr(args, field.name)
+                if arg_value is not None:
+                    config[field.name] = arg_value
         
         return cls.from_dict(config)
-
-
+    
 def generate_dummy_data(config):
     """Generate synthetic data for testing"""
     data = {
