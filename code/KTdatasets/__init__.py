@@ -1,1 +1,1 @@
-import SimpleKTDataset
+from KTdatasets import SimpleKTDataset
