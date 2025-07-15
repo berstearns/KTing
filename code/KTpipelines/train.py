@@ -2,6 +2,18 @@
 Knowledge Tracing Training Pipeline
 """
 import os
+try:
+    from KTdatasets import SimpleKTDataset
+except:
+    import sys
+    package_tentative_rootfolder = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    print(package_tentative_rootfolder)
+    sys.path.append(package_tentative_rootfolder)
+    try:
+        from KTdatasets import SimpleKTDataset
+    except:
+        raise ImportError("Couldn\'t find KTdatasets")
+
 import json
 import shutil
 import argparse
@@ -19,7 +31,6 @@ import pandas as pd
 import numpy as np
 
 
-from KTdatasets import SimpleKTDataset
 
 class SimpleKTModel(nn.Module):
     """Knowledge tracing model with user and question embeddings"""
